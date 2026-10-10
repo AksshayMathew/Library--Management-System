@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, ClassVar
 
 from library.config import Settings
+from library.decorators import MEMBER_REGISTRY, register_member_type
 from library.exceptions import ValidationError
 
 
@@ -47,32 +48,31 @@ class Member(ABC):
         }
 
 
+@register_member_type("student")
 class Student(Member):
     """A student member, limited by the joiner's ``student_borrow_limit``."""
-
-    member_type = "student"
 
     def borrow_limit(self, settings: Settings) -> int:
         return settings.student_borrow_limit
 
 
+@register_member_type("staff")
 class Staff(Member):
     """A staff member, limited by the joiner's ``staff_borrow_limit``."""
-
-    member_type = "staff"
 
     def borrow_limit(self, settings: Settings) -> int:
         return settings.staff_borrow_limit
 
 
-MEMBER_TYPES: dict[str, type[Member]] = {"student": Student, "staff": Staff}
-
-
 def create_member(member_type: str, member_id: str, name: str, email: str) -> Member:
-    """Factory: build the right ``Member`` subclass from its type name."""
+    """Factory: build the registered ``Member`` subclass for ``member_type``.
+
+    New member types register themselves with ``@register_member_type``, so
+    this function never needs to change (Open/Closed Principle).
+    """
     try:
-        member_cls = MEMBER_TYPES[member_type.strip().lower()]
+        member_cls = MEMBER_REGISTRY[member_type.strip().lower()]
     except (KeyError, AttributeError):
-        allowed = ", ".join(sorted(MEMBER_TYPES))
+        allowed = ", ".join(sorted(MEMBER_REGISTRY))
         raise ValidationError(f"Unknown member type {member_type!r} (allowed: {allowed})") from None
     return member_cls(member_id=member_id, name=name, email=email)
