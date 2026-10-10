@@ -49,9 +49,18 @@ Each advanced feature is used for a real purpose:
 
 ## 2. SOLID walkthrough
 
-**Single Responsibility.** _To be written._
+**Single Responsibility.** `Book` (`library/models/book.py:13`) holds its own data and copy-count behaviour
+(`checkout`, `checkin`, `matches`) and nothing else. It doesn't validate ISBNs (`validators.py`) or save
+itself (`sqlite_storage.py`). Fine arithmetic has its own class, `FinePolicy`
+(`library/services/fine_policy.py:12`), and logging setup is in `logging_config.py`. `LibraryService`
+coordinates a use case but hands each rule to the class that owns it.
 
-**Open/Closed.** _To be written._
+**Open/Closed.** Member types register themselves with `@register_member_type("...")`
+(`decorators.py:73`, used at `member.py:51` and `:59`). The factory `create_member` (`member.py:67`) looks the
+type up in `MEMBER_REGISTRY` (`decorators.py:24`). Adding a `Faculty` type therefore means *adding one class*,
+without editing `Student`, `Staff`, the factory or the service. The test
+`test_new_member_type_works_without_changing_service` does exactly this. `FinePolicy` is a second extension
+point: a capped or grace-period policy can be passed to `LibraryService(fine_policy=...)`.
 
 **Liskov Substitution.** `Member` (`member.py:15`) sets the contract: `borrow_limit(settings)` and
 `can_borrow(active_loans, settings)`. `Student` (`member.py:52`) and `Staff` (`member.py:60`) only change the
@@ -72,8 +81,39 @@ to check fines on exact dates, and a JSON back-end could replace SQLite without 
 
 ## 3. Personalised parameters
 
-_To be written._
+`get_my_library_parameters("56040183")` (`library/config.py:22`) produces our rules. We wrap them in a frozen
+`Settings` dataclass (`config.py:37`) so no layer can change a limit at runtime.
+
+| Parameter | Value | Where it is enforced |
+|---|---|---|
+| genres | Fiction, History, Poetry, Science, Mystery, Technology | `_validate_genre` (`library_service.py:253`), so other genres are rejected with 400 |
+| student_borrow_limit | 3 | `Student.borrow_limit` (`member.py:55`) |
+| staff_borrow_limit | 7 | `Staff.borrow_limit` (`member.py:63`) |
+| fine_per_day | 1.73 | `FinePolicy.calculate` (`fine_policy.py:36`): days late × 1.73, rounded to 2 dp |
+| loan period (our choice) | 14 days | `Settings.loan_period_days` |
+
+The ID can be overridden with `--employee-id` or the `LIBRARY_EMPLOYEE_ID` variable (`config.py:64`).
 
 ## 4. Trade-offs we made consciously
 
-_To be written._
+- **SQLite instead of JSON.** SQLite gives us real transactions, so a borrow's two writes are
+  all-or-nothing. It also lets us run queries like "active loans for member X" without loading
+  everything, and its cursor feeds our generators naturally. The cost is a schema to maintain and data that
+  is less human-readable than a JSON file.
+- **Flask instead of FastAPI.** The brief asks for **400** on invalid bodies, but FastAPI returns 422 by
+  default and would validate through a second schema layer (Pydantic). Flask's small `json_body()` and
+  `required()` helpers (`app.py:117`, `:125`) let every endpoint reuse *our* validators. We gave up
+  automatic OpenAPI docs in exchange.
+- **A known ISP/SRP compromise.** `SQLiteStorage` (`sqlite_storage.py:47`) implements all four storage
+  interfaces in one class. This is pragmatic: there is one connection and one transaction scope. But the
+  class will grow with every new table. The refactor would be to split it into `SQLiteBookRepository`,
+  `SQLiteMemberRepository` and `SQLiteLoanRepository` sharing a connection/unit-of-work object. The service
+  would not change, because it already takes the repositories separately.
+- **`require_member` swaps the argument.** Callers pass a `member_id`, but the method body receives the
+  loaded `Member` (`decorators.py:52`). This avoids looking the member up twice, at the cost of a less
+  obvious signature, so we documented it in the docstrings.
+- **Single-threaded API.** One SQLite connection is shared, so the development server runs with
+  `threaded=False` (`library/api/__main__.py:19`). A production version would open a connection per
+  request.
+- **Fines are calculated, not paid.** `total_fines` adds up the fines recorded at return plus the fines still
+  accruing on overdue books. A payments feature was out of scope (KISS).
