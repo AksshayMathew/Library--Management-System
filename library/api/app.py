@@ -11,7 +11,17 @@ from typing import Any
 
 from flask import Flask, Response, jsonify, request
 
-from library.exceptions import DuplicateBookError, ValidationError
+from library.exceptions import (
+    BookNotAvailableError,
+    BookNotFoundError,
+    BorrowLimitExceededError,
+    DuplicateBookError,
+    DuplicateMemberError,
+    LibraryError,
+    LoanNotFoundError,
+    MemberNotFoundError,
+    ValidationError,
+)
 from library.services.library_service import LibraryService
 
 
@@ -38,13 +48,53 @@ def create_app(service: LibraryService) -> Flask:
         )
         return jsonify(book.to_dict()), 201
 
+    @app.post("/members")
+    def add_member() -> tuple[Response, int]:
+        """Register a member. Body: {member_id, name, email, member_type}."""
+        data = json_body()
+        member = service.add_member(
+            member_id=required(data, "member_id"),
+            name=required(data, "name"),
+            email=required(data, "email"),
+            member_type=required(data, "member_type"),
+        )
+        return jsonify(member.to_dict()), 201
+
+    @app.get("/members/<member_id>")
+    def get_member(member_id: str) -> tuple[Response, int]:
+        """Member details, current loans and total fines."""
+        return jsonify(service.member_status(member_id).to_dict()), 200
+
+    @app.post("/borrow")
+    def borrow() -> tuple[Response, int]:
+        """Borrow a book. Body: {member_id, isbn}. Creates a loan -> 201."""
+        data = json_body()
+        loan = service.borrow_book(required(data, "member_id"), required(data, "isbn"))
+        return jsonify(loan.to_dict()), 201
+
+    @app.post("/return")
+    def return_book() -> tuple[Response, int]:
+        """Return a book. Body: {member_id, isbn}. Response includes the fine."""
+        data = json_body()
+        loan = service.return_book(required(data, "member_id"), required(data, "isbn"))
+        return jsonify(loan.to_dict()), 200
+
     @app.errorhandler(ValidationError)
     def handle_validation_error(exc: ValidationError) -> tuple[Response, int]:
         return jsonify(error=str(exc)), 400
 
     @app.errorhandler(DuplicateBookError)
-    def handle_duplicate(exc: DuplicateBookError) -> tuple[Response, int]:
+    @app.errorhandler(DuplicateMemberError)
+    @app.errorhandler(BookNotAvailableError)
+    @app.errorhandler(BorrowLimitExceededError)
+    def handle_conflict(exc: LibraryError) -> tuple[Response, int]:
         return jsonify(error=str(exc)), 409
+
+    @app.errorhandler(BookNotFoundError)
+    @app.errorhandler(MemberNotFoundError)
+    @app.errorhandler(LoanNotFoundError)
+    def handle_not_found(exc: LibraryError) -> tuple[Response, int]:
+        return jsonify(error=str(exc)), 404
 
     return app
 
