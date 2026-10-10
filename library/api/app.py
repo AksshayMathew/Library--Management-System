@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from flask import Flask, Response, jsonify, request
+from werkzeug.exceptions import HTTPException
 
 from library.exceptions import (
     BookNotAvailableError,
@@ -79,24 +80,38 @@ def create_app(service: LibraryService) -> Flask:
         loan = service.return_book(required(data, "member_id"), required(data, "isbn"))
         return jsonify(loan.to_dict()), 200
 
-    @app.errorhandler(ValidationError)
-    def handle_validation_error(exc: ValidationError) -> tuple[Response, int]:
-        return jsonify(error=str(exc)), 400
+    @app.errorhandler(LibraryError)
+    def handle_library_error(exc: LibraryError) -> tuple[Response, int]:
+        """Translate any domain error into a JSON body with the mapped HTTP status."""
+        return jsonify(error=str(exc), type=type(exc).__name__), status_for(exc)
 
-    @app.errorhandler(DuplicateBookError)
-    @app.errorhandler(DuplicateMemberError)
-    @app.errorhandler(BookNotAvailableError)
-    @app.errorhandler(BorrowLimitExceededError)
-    def handle_conflict(exc: LibraryError) -> tuple[Response, int]:
-        return jsonify(error=str(exc)), 409
-
-    @app.errorhandler(BookNotFoundError)
-    @app.errorhandler(MemberNotFoundError)
-    @app.errorhandler(LoanNotFoundError)
-    def handle_not_found(exc: LibraryError) -> tuple[Response, int]:
-        return jsonify(error=str(exc)), 404
+    @app.errorhandler(HTTPException)
+    def handle_http_error(exc: HTTPException) -> tuple[Response, int]:
+        """Unknown routes (404), wrong methods (405) etc. also answer in JSON."""
+        return jsonify(error=exc.description, type=exc.name), exc.code or 500
 
     return app
+
+
+# Single source of truth for how domain errors appear over HTTP.
+ERROR_STATUS: dict[type[LibraryError], int] = {
+    ValidationError: 400,
+    BookNotFoundError: 404,
+    MemberNotFoundError: 404,
+    LoanNotFoundError: 404,
+    DuplicateBookError: 409,
+    DuplicateMemberError: 409,
+    BookNotAvailableError: 409,
+    BorrowLimitExceededError: 409,
+}
+
+
+def status_for(exc: LibraryError) -> int:
+    """HTTP status for ``exc``, walking up its class hierarchy (unmapped errors -> 400)."""
+    for cls in type(exc).__mro__:
+        if cls in ERROR_STATUS:
+            return ERROR_STATUS[cls]
+    return 400
 
 
 def json_body() -> dict[str, Any]:
