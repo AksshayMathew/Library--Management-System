@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from datetime import date
+from typing import Any
 
 from library.config import Settings
 from library.decorators import log_action, require_member
@@ -42,6 +44,42 @@ from library.validators import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class OverdueLoan:
+    """An unreturned loan past its due date, with the fine accrued so far."""
+
+    loan: Loan
+    days_overdue: int
+    accrued_fine: float
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**self.loan.to_dict(), "days_overdue": self.days_overdue, "accrued_fine": self.accrued_fine}
+
+
+@dataclass(frozen=True)
+class MemberStatus:
+    """A member's details plus their current borrowing position.
+
+    ``total_fines`` = fines recorded on returned books + fines accruing on
+    books that are still out and overdue.
+    """
+
+    member: Member
+    borrow_limit: int
+    active_loans: list[Loan]
+    total_fines: float
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            **self.member.to_dict(),
+            "borrow_limit": self.borrow_limit,
+            "active_loan_count": len(self.active_loans),
+            "can_borrow": len(self.active_loans) < self.borrow_limit,
+            "active_loans": [loan.to_dict() for loan in self.active_loans],
+            "total_fines": self.total_fines,
+        }
 
 
 class LibraryService:
@@ -173,6 +211,42 @@ class LibraryService:
             loan.fine = self.fine_policy.calculate(loan.due_date, loan.returned_on)
             self.loans.update_loan(loan)
             return loan
+
+    # -- reporting ------------------------------------------------------------
+
+    def iter_overdue_loans(self) -> Iterator[OverdueLoan]:
+        """Generator: yield every unreturned loan past its due date, with its fine so far.
+
+        Loans are streamed from storage one at a time, so even a very large
+        loan history is never held in memory as a full list.
+        """
+        today = self._today()
+        for loan in self.loans.iter_loans(active_only=True):
+            if loan.is_overdue(today):
+                yield OverdueLoan(
+                    loan=loan,
+                    days_overdue=self.fine_policy.days_overdue(loan.due_date, today),
+                    accrued_fine=self.fine_policy.calculate(loan.due_date, today),
+                )
+
+    @require_member
+    def member_status(self, member: Member) -> MemberStatus:
+        """Details, current loans and fines for a member (called as ``member_status(member_id)``)."""
+        today = self._today()
+        active_loans: list[Loan] = []
+        total_fines = 0.0
+        for loan in self.loans.iter_loans(member.member_id):
+            if loan.is_active:
+                active_loans.append(loan)
+                total_fines += self.fine_policy.calculate(loan.due_date, today)
+            else:
+                total_fines += loan.fine
+        return MemberStatus(
+            member=member,
+            borrow_limit=member.borrow_limit(self.settings),
+            active_loans=active_loans,
+            total_fines=round(total_fines, 2),
+        )
 
     # -- helpers --------------------------------------------------------------
 
