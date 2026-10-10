@@ -1,0 +1,9 @@
+[project]
+name = "library-management-system"
+version = "0.1.0"
+description = "A small, testable library management system with a CLI and a REST API."
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
