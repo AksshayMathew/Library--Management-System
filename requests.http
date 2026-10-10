@@ -1,0 +1,98 @@
+### Library Management System - example API requests
+### Open in VS Code (REST Client extension) or JetBrains IDEs and click "Send Request".
+### Start the server first:  python -m library.api
+
+@baseUrl = http://127.0.0.1:5000
+
+### 1. List all books  -> 200
+GET {{baseUrl}}/books
+
+### 2. Search books by text and/or genre  -> 200
+GET {{baseUrl}}/books?q=clean&genre=Technology
+
+### 3. Add a book  -> 201 (409 if the ISBN already exists)
+POST {{baseUrl}}/books
+Content-Type: application/json
+
+{
+  "isbn": "978-0-13-235088-4",
+  "title": "Clean Code",
+  "author": "Robert C. Martin",
+  "genre": "Technology",
+  "copies": 2
+}
+
+### 4. Add a book with an invalid ISBN  -> 400
+POST {{baseUrl}}/books
+Content-Type: application/json
+
+{
+  "isbn": "978-0-13-235088-5",
+  "title": "Broken ISBN",
+  "author": "Nobody",
+  "genre": "Fiction"
+}
+
+### 5. Register a student  -> 201
+POST {{baseUrl}}/members
+Content-Type: application/json
+
+{
+  "member_id": "S100",
+  "name": "Asha Kumar",
+  "email": "asha.kumar@example.com",
+  "member_type": "student"
+}
+
+### 6. Register a member with an invalid email  -> 400
+POST {{baseUrl}}/members
+Content-Type: application/json
+
+{
+  "member_id": "S101",
+  "name": "Bad Email",
+  "email": "not-an-email",
+  "member_type": "student"
+}
+
+### 7. Borrow a book  -> 201 (creates a loan)
+POST {{baseUrl}}/borrow
+Content-Type: application/json
+
+{
+  "member_id": "S100",
+  "isbn": "9780132350884"
+}
+
+### 8. Borrow with an unknown member  -> 404
+POST {{baseUrl}}/borrow
+Content-Type: application/json
+
+{
+  "member_id": "NOBODY",
+  "isbn": "9780132350884"
+}
+
+### 9. Member details, current loans and fines  -> 200
+GET {{baseUrl}}/members/S100
+
+### 10. Return a book  -> 200 (response includes the fine)
+POST {{baseUrl}}/return
+Content-Type: application/json
+
+{
+  "member_id": "S100",
+  "isbn": "9780132350884"
+}
+
+### 11. Return a book that is not on loan  -> 404
+POST {{baseUrl}}/return
+Content-Type: application/json
+
+{
+  "member_id": "S100",
+  "isbn": "9780132350884"
+}
+
+### 12. Unknown member  -> 404
+GET {{baseUrl}}/members/NOBODY
