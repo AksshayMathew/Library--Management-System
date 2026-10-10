@@ -13,6 +13,7 @@ import argparse
 import os
 import sys
 from collections.abc import Callable, Sequence
+from datetime import date
 
 from library.config import DB_PATH_ENV_VAR, DEFAULT_DB_PATH, load_settings
 from library.exceptions import LibraryError
@@ -57,6 +58,39 @@ def cmd_return(service: LibraryService, args: argparse.Namespace) -> None:
     print(f"{loan.member_id} returned {loan.isbn} on {loan.returned_on.isoformat()} ({fine})")
 
 
+def cmd_list_overdue(service: LibraryService, args: argparse.Namespace) -> None:
+    found = False
+    for overdue in service.iter_overdue_loans():
+        loan = overdue.loan
+        print(
+            f"{loan.member_id} | {loan.isbn} | due {loan.due_date.isoformat()} | "
+            f"{overdue.days_overdue} day(s) late | fine so far: {overdue.accrued_fine:.2f}"
+        )
+        found = True
+    if not found:
+        print("No overdue loans.")
+
+
+def cmd_member_status(service: LibraryService, args: argparse.Namespace) -> None:
+    status = service.member_status(args.member_id)
+    member = status.member
+    print(f"{member.member_id}: {member.name} <{member.email}> ({member.member_type})")
+    print(f"Books on loan: {len(status.active_loans)}/{status.borrow_limit}")
+    for loan in status.active_loans:
+        print(f"  - {loan.isbn}, borrowed {loan.borrowed_on.isoformat()}, due {loan.due_date.isoformat()}")
+    print(f"Total fines: {status.total_fines:.2f}")
+
+
+def cmd_show_config(service: LibraryService, args: argparse.Namespace) -> None:
+    settings = service.settings
+    print(f"Employee ID:          {settings.employee_id}")
+    print(f"Genres:               {', '.join(settings.genres)}")
+    print(f"Student borrow limit: {settings.student_borrow_limit}")
+    print(f"Staff borrow limit:   {settings.staff_borrow_limit}")
+    print(f"Fine per day:         {settings.fine_per_day:.2f}")
+    print(f"Loan period (days):   {settings.loan_period_days}")
+
+
 def format_book(book: Book) -> str:
     """One-line, human-readable summary of a book."""
     return (
@@ -77,6 +111,11 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"SQLite database file (default: ${DB_PATH_ENV_VAR} or {DEFAULT_DB_PATH})",
     )
     parser.add_argument("--employee-id", help="employee ID used to personalise the library rules")
+    parser.add_argument(
+        "--today",
+        type=parse_date,
+        help="pretend today is YYYY-MM-DD (useful to demonstrate overdue fines)",
+    )
     commands = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
 
     add_book = commands.add_parser("add-book", help="add a book to the catalogue")
@@ -109,7 +148,25 @@ def build_parser() -> argparse.ArgumentParser:
     return_.add_argument("--isbn", required=True)
     return_.set_defaults(handler=cmd_return)
 
+    list_overdue = commands.add_parser("list-overdue", help="list unreturned books past their due date")
+    list_overdue.set_defaults(handler=cmd_list_overdue)
+
+    member_status = commands.add_parser("member-status", help="show a member's loans and fines")
+    member_status.add_argument("--member-id", required=True)
+    member_status.set_defaults(handler=cmd_member_status)
+
+    show_config = commands.add_parser("show-config", help="show the personalised library rules")
+    show_config.set_defaults(handler=cmd_show_config)
+
     return parser
+
+
+def parse_date(raw: str) -> date:
+    """argparse type for ``YYYY-MM-DD`` dates."""
+    try:
+        return date.fromisoformat(raw)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid date {raw!r}, expected YYYY-MM-DD") from None
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -117,10 +174,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     configure_logging()
     settings = load_settings(args.employee_id)
+    today: Callable[[], date] = (lambda: args.today) if args.today else date.today
     handler: Handler = args.handler
     try:
         with SQLiteStorage(args.db) as storage:
-            handler(LibraryService.from_storage(storage, settings), args)
+            handler(LibraryService.from_storage(storage, settings, today=today), args)
     except LibraryError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
