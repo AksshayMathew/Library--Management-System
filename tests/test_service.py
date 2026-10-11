@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterator
+from datetime import date
 
 import pytest
 
@@ -115,6 +116,36 @@ def test_return_frees_a_slot_under_the_limit(service: LibraryService) -> None:
 def test_return_without_loan_raises(service: LibraryService) -> None:
     with pytest.raises(LoanNotFoundError):
         service.return_book("S1", CLEAN_CODE_ISBN)
+
+
+def test_return_dated_before_borrow_is_rejected(service: LibraryService, clock: FakeClock) -> None:
+    service.borrow_book("S1", CLEAN_CODE_ISBN)
+    clock.advance(-1)  # e.g. the CLI run with an earlier --today
+    with pytest.raises(ValidationError, match="before the borrow date"):
+        service.return_book("S1", CLEAN_CODE_ISBN)
+    assert service.loans.count_active_loans("S1") == 1  # nothing changed
+    assert service.get_book(CLEAN_CODE_ISBN).available_copies == 9
+
+
+def test_same_day_return_is_allowed(service: LibraryService) -> None:
+    service.borrow_book("S1", CLEAN_CODE_ISBN)
+    assert service.return_book("S1", CLEAN_CODE_ISBN).fine == 0.0
+
+
+def test_isbn10_and_isbn13_refer_to_the_same_book(service: LibraryService) -> None:
+    loan = service.borrow_book("S1", "0-13-235088-2")  # ISBN-10 of Clean Code
+    assert loan.isbn == CLEAN_CODE_ISBN
+    service.return_book("S1", CLEAN_CODE_ISBN)
+    with pytest.raises(DuplicateBookError):
+        service.add_book("0132350882", "Clean Code", "Robert C. Martin", "Technology")
+
+
+def test_fine_is_charged_when_crossing_month_and_leap_day(service: LibraryService, clock: FakeClock) -> None:
+    clock.today = date(2028, 2, 20)  # 2028 is a leap year
+    loan = service.borrow_book("S1", CLEAN_CODE_ISBN)
+    assert loan.due_date == date(2028, 3, 5)
+    clock.today = date(2028, 3, 7)
+    assert service.return_book("S1", CLEAN_CODE_ISBN).fine == round(2 * 1.73, 2)
 
 
 # -- overdue report and member status -----------------------------------------

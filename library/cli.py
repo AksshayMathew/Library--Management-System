@@ -10,6 +10,7 @@ Usage: ``python -m library <command> [options]`` - run with ``--help`` for detai
 from __future__ import annotations
 
 import argparse
+import io
 import os
 import sys
 from collections.abc import Callable, Sequence
@@ -119,7 +120,7 @@ def build_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
 
     add_book = commands.add_parser("add-book", help="add a book to the catalogue")
-    add_book.add_argument("--isbn", required=True, help="ISBN-10 or ISBN-13 (hyphens allowed)")
+    add_book.add_argument("--isbn", required=True, help="ISBN-10 or ISBN-13, hyphens allowed (stored as ISBN-13)")
     add_book.add_argument("--title", required=True)
     add_book.add_argument("--author", required=True)
     add_book.add_argument("--genre", required=True, help="one of the genres shown by show-config")
@@ -169,8 +170,23 @@ def parse_date(raw: str) -> date:
         raise argparse.ArgumentTypeError(f"invalid date {raw!r}, expected YYYY-MM-DD") from None
 
 
+def use_safe_console_output() -> None:
+    """Never crash on characters the output encoding cannot represent.
+
+    When output is piped or redirected on Windows, Python encodes it with the
+    legacy code page (e.g. cp1252), which cannot represent a Hindi or Chinese
+    book title. Such characters are shown as '?' instead of raising
+    ``UnicodeEncodeError`` - which would otherwise happen *after* the change
+    was already saved.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, io.TextIOWrapper):
+            stream.reconfigure(errors="replace")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Entry point. Returns the process exit code (0 = success, 1 = library error)."""
+    use_safe_console_output()
     args = build_parser().parse_args(argv)
     configure_logging()
     settings = load_settings(args.employee_id)

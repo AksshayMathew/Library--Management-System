@@ -197,17 +197,25 @@ class LibraryService:
         """Return the member's copy of ``isbn`` and record any overdue fine.
 
         Called as ``return_book(member_id, isbn)``. Raises
-        ``MemberNotFoundError`` or ``LoanNotFoundError``.
+        ``MemberNotFoundError``, ``LoanNotFoundError``, or ``ValidationError``
+        if "today" is earlier than the borrow date (only possible with an
+        overridden clock, e.g. the CLI's ``--today``).
         """
         isbn = validate_isbn(isbn)
         with self.transactions.transaction():
             loan = self.loans.get_active_loan(member.member_id, isbn)
             if loan is None:
                 raise LoanNotFoundError(member.member_id, isbn)
+            returned_on = self._today()
+            if returned_on < loan.borrowed_on:
+                raise ValidationError(
+                    f"Return date {returned_on.isoformat()} is before the borrow date "
+                    f"{loan.borrowed_on.isoformat()}"
+                )
             book = self.get_book(isbn)
             book.checkin()
             self.books.update_book(book)
-            loan.returned_on = self._today()
+            loan.returned_on = returned_on
             loan.fine = self.fine_policy.calculate(loan.due_date, loan.returned_on)
             self.loans.update_loan(loan)
             return loan

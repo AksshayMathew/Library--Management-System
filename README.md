@@ -114,8 +114,14 @@ python -m library --today 2026-01-20 list-overdue
 python -m library --today 2026-01-20 return --member-id S001 --isbn 9780062316097   # 5 days late -> fine 8.65
 ```
 
-Errors (unknown member, limit reached, invalid ISBN...) are printed as
+Errors (unknown member, limit reached, invalid ISBN, unusable `--db` file...) are printed as
 `Error: ...` with exit code 1. Every borrow and return is logged to `logs/library.log`.
+
+Input rules worth knowing:
+- ISBN-10s are converted to ISBN-13 (e.g. `0-13-235088-2` is stored as `9780132350884`), so either
+  form finds the same book and it can't be added twice.
+- `--copies` must be between 1 and 10,000. Genres must be one of the six shown by `show-config`.
+- A return can't be dated before its borrow date, so a `--today` earlier than the loan is rejected.
 
 ## Using the REST API
 
