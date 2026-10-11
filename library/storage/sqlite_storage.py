@@ -10,6 +10,7 @@ from datetime import date
 from pathlib import Path
 from types import TracebackType
 
+from library.exceptions import StorageError
 from library.models.book import Book
 from library.models.loan import Loan
 from library.models.member import Member, create_member
@@ -52,13 +53,25 @@ class SQLiteStorage(LibraryStorage):
     """
 
     def __init__(self, db_path: str | Path = "library.db") -> None:
-        # check_same_thread=False lets the Flask dev server reuse the connection;
-        # the API is run single-threaded so access is never concurrent.
-        self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA foreign_keys = ON")
-        self._conn.executescript(SCHEMA)
+        """Open (or create) the database and its tables.
+
+        Raises ``StorageError`` instead of a raw ``sqlite3`` error if the path
+        cannot be opened (e.g. a missing folder) or the file is not a database.
+        """
         self._transaction_depth = 0
+        try:
+            # check_same_thread=False lets the Flask dev server reuse the connection;
+            # the API is run single-threaded so access is never concurrent.
+            self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        except sqlite3.Error as exc:
+            raise StorageError(f"Cannot open database {str(db_path)!r}: {exc}") from exc
+        try:
+            self._conn.row_factory = sqlite3.Row
+            self._conn.execute("PRAGMA foreign_keys = ON")
+            self._conn.executescript(SCHEMA)
+        except sqlite3.Error as exc:
+            self._conn.close()
+            raise StorageError(f"Cannot use database {str(db_path)!r}: {exc}") from exc
         logger.debug("Opened SQLite database at %s", db_path)
 
     # -- connection lifecycle -------------------------------------------------
@@ -84,19 +97,25 @@ class SQLiteStorage(LibraryStorage):
 
         Nested ``with storage.transaction():`` blocks join the outermost one,
         so a service operation that performs several writes (update the book,
-        insert the loan) is saved all-or-nothing.
+        insert the loan) is saved all-or-nothing. Low-level ``sqlite3`` errors
+        (constraint violations, a locked or read-only file...) are re-raised
+        as ``StorageError`` so callers only ever see library exceptions.
         """
         self._transaction_depth += 1
         try:
             yield
+            if self._transaction_depth == 1:
+                self._conn.commit()
+        except sqlite3.Error as exc:
+            if self._transaction_depth == 1:
+                self._conn.rollback()
+                logger.error("Transaction rolled back after a database error: %s", exc)
+            raise StorageError(f"Database error: {exc}") from exc
         except BaseException:
             if self._transaction_depth == 1:
                 self._conn.rollback()
                 logger.warning("Transaction rolled back")
             raise
-        else:
-            if self._transaction_depth == 1:
-                self._conn.commit()
         finally:
             self._transaction_depth -= 1
 

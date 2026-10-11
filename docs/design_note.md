@@ -21,8 +21,8 @@ The system has four layers, and each one only talks to the layer below it.
 The **delivery layer** has two front-ends: an `argparse` CLI (`library/cli.py`) and a Flask API
 (`library/api/app.py`). Both parse their input, call the service, and format the result as text or JSON.
 They contain no library rules. For example, borrowing from the terminal (`cli.py:51`) and borrowing over HTTP
-(`api/app.py:73`) both call the same `LibraryService.borrow_book` (`library/services/library_service.py:170`).
-Returning works the same way (`cli.py:56`, `app.py:80` → `library_service.py:196`). As a result, the CLI and
+(`api/app.py:74`) both call the same `LibraryService.borrow_book` (`library/services/library_service.py:170`).
+Returning works the same way (`cli.py:56`, `app.py:81` → `library_service.py:196`). As a result, the CLI and
 the API cannot disagree about a borrow limit or a fine.
 
 The **service layer** (`library/services/`) is where all the rules live: borrow limits, availability, genres,
@@ -32,7 +32,9 @@ The **storage layer** (`library/storage/`) defines abstract repositories and imp
 Errors flow upward as custom exceptions that all derive from `LibraryError` (`library/exceptions.py:13`).
 They describe *what* went wrong, never how to show it. Each delivery layer decides how to present them.
 The CLI prints `Error: ...` and exits with code 1 (`cli.py:172`). The API maps each exception class to an
-HTTP status in a single table (`app.py:97`): 400 for validation, 404 for not found, 409 for rule violations.
+HTTP status in a single table (`app.py:98`): 400 for validation, 404 for not found, 409 for rule violations
+and 500 for database failures. Even a raw `sqlite3` error never escapes: storage re-raises it as
+`StorageError`.
 The input regexes live only in `library/validators.py`, and the service calls them, so both front-ends
 reject exactly the same input (DRY).
 
@@ -40,10 +42,10 @@ Each advanced feature is used for a real purpose:
 - **Decorators:** `log_action` logs every borrow and return (`library/decorators.py:27`). `require_member`
   fails fast when the member doesn't exist (`decorators.py:52`). `register_member_type` is a class
   decorator for new member types (`decorators.py:73`).
-- **Generators:** `iter_books` and `iter_loans` stream rows from the database cursor (`sqlite_storage.py:125`,
-  `:186`). `search_books` and `iter_overdue_loans` (`library_service.py:141`, `:217`) filter those streams
+- **Generators:** `iter_books` and `iter_loans` stream rows from the database cursor (`sqlite_storage.py:144`,
+  `:205`). `search_books` and `iter_overdue_loans` (`library_service.py:141`, `:217`) filter those streams
   without ever building a full list.
-- **Context managers:** `SQLiteStorage.transaction()` (`sqlite_storage.py:82`) commits on success and rolls
+- **Context managers:** `SQLiteStorage.transaction()` (`sqlite_storage.py:95`) commits on success and rolls
   back on any exception, so a failed borrow never leaves a book marked as lent with no loan record.
   `SQLiteStorage` itself is a context manager that always closes the connection.
 
@@ -102,9 +104,9 @@ The ID can be overridden with `--employee-id` or the `LIBRARY_EMPLOYEE_ID` varia
   is less human-readable than a JSON file.
 - **Flask instead of FastAPI.** The brief asks for **400** on invalid bodies, but FastAPI returns 422 by
   default and would validate through a second schema layer (Pydantic). Flask's small `json_body()` and
-  `required()` helpers (`app.py:117`, `:125`) let every endpoint reuse *our* validators. We gave up
+  `required()` helpers (`app.py:119`, `:129`) let every endpoint reuse *our* validators. We gave up
   automatic OpenAPI docs in exchange.
-- **A known ISP/SRP compromise.** `SQLiteStorage` (`sqlite_storage.py:47`) implements all four storage
+- **A known ISP/SRP compromise.** `SQLiteStorage` (`sqlite_storage.py:48`) implements all four storage
   interfaces in one class. This is pragmatic: there is one connection and one transaction scope. But the
   class will grow with every new table. The refactor would be to split it into `SQLiteBookRepository`,
   `SQLiteMemberRepository` and `SQLiteLoanRepository` sharing a connection/unit-of-work object. The service

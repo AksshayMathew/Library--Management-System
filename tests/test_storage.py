@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from library.exceptions import StorageError
 from library.models.book import Book
 from library.models.loan import Loan
 from library.models.member import Staff, Student
@@ -66,6 +67,28 @@ def test_transaction_commits_on_success(storage: SQLiteStorage, sample_book: Boo
         sample_book.available_copies = 1
         storage.update_book(sample_book)
     assert storage.get_book(sample_book.isbn).available_copies == 1
+
+
+def test_missing_directory_raises_storage_error(tmp_path: Path) -> None:
+    with pytest.raises(StorageError, match="Cannot open database"):
+        SQLiteStorage(tmp_path / "no" / "such" / "folder" / "library.db")
+
+
+def test_non_database_file_raises_storage_error(tmp_path: Path) -> None:
+    not_a_db = tmp_path / "notes.txt"
+    not_a_db.write_text("this is not a SQLite database\n" * 100, encoding="utf-8")
+    with pytest.raises(StorageError, match="Cannot use database"):
+        SQLiteStorage(not_a_db)
+
+
+def test_sqlite_errors_become_storage_errors_and_roll_back(storage: SQLiteStorage, sample_book: Book) -> None:
+    storage.add_book(sample_book)
+    with pytest.raises(StorageError):
+        with storage.transaction():
+            sample_book.available_copies = 0
+            storage.update_book(sample_book)
+            storage.add_book(sample_book)  # same primary key -> sqlite3.IntegrityError
+    assert storage.get_book(sample_book.isbn).available_copies == 2
 
 
 def test_data_survives_restart(tmp_path: Path, sample_book: Book) -> None:

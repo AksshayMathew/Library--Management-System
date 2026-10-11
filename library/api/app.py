@@ -21,6 +21,7 @@ from library.exceptions import (
     LibraryError,
     LoanNotFoundError,
     MemberNotFoundError,
+    StorageError,
     ValidationError,
 )
 from library.services.library_service import LibraryService
@@ -103,6 +104,7 @@ ERROR_STATUS: dict[type[LibraryError], int] = {
     DuplicateMemberError: 409,
     BookNotAvailableError: 409,
     BorrowLimitExceededError: 409,
+    StorageError: 500,
 }
 
 
@@ -118,7 +120,9 @@ def json_body() -> dict[str, Any]:
     """Return the request's JSON object, or raise ``ValidationError`` if it is missing/malformed."""
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
-        raise ValidationError("Request body must be a JSON object")
+        raise ValidationError(
+            "Request body must be a JSON object sent with the header 'Content-Type: application/json'"
+        )
     return data
 
 

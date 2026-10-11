@@ -7,7 +7,8 @@ from typing import Any
 import pytest
 from flask.testing import FlaskClient
 
-from library.api.app import create_app
+from library.api.app import create_app, status_for
+from library.exceptions import StorageError
 from library.services.library_service import LibraryService
 from tests.conftest import CLEAN_CODE_ISBN, FakeClock
 
@@ -68,6 +69,9 @@ def test_post_book_duplicate_conflict(client: FlaskClient) -> None:
         ({k: v for k, v in POETRY_BOOK.items() if k != "title"}, "Missing required field: 'title'"),
         ({**POETRY_BOOK, "genre": "Fantasy"}, "not offered"),
         ({**POETRY_BOOK, "copies": 0}, "positive integer"),
+        ({**POETRY_BOOK, "copies": 10**20}, "at most"),  # would overflow SQLite INTEGER
+        ({**POETRY_BOOK, "copies": "2"}, "positive integer"),
+        ({**POETRY_BOOK, "isbn": 9780140421996}, "ISBN must be a string"),
         ([1, 2, 3], "JSON object"),
     ],
 )
@@ -80,6 +84,25 @@ def test_post_book_bad_request(client: FlaskClient, body: Any, message: str) -> 
 def test_malformed_json_is_400(client: FlaskClient) -> None:
     response = client.post("/books", data="{not json", content_type="application/json")
     assert response.status_code == 400
+
+
+def test_missing_content_type_explains_the_fix(client: FlaskClient) -> None:
+    response = client.post("/borrow", data='{"member_id": "S1", "isbn": "9780132350884"}')
+    assert response.status_code == 400
+    assert "Content-Type: application/json" in response.get_json()["error"]
+
+
+def test_isbn10_of_existing_book_is_a_duplicate(client: FlaskClient) -> None:
+    clean_code_isbn10 = "0-13-235088-2"  # same book as the seeded ISBN-13
+    status, body = post(client, "/books", {"isbn": clean_code_isbn10, "title": "Clean Code",
+                                           "author": "Robert C. Martin", "genre": "Technology"})
+    assert status == 409
+    assert body["type"] == "DuplicateBookError"
+    assert post(client, "/borrow", {"member_id": "S1", "isbn": clean_code_isbn10})[0] == 201
+
+
+def test_storage_errors_map_to_500() -> None:
+    assert status_for(StorageError("disk full")) == 500
 
 
 # -- /members ---------------------------------------------------------------------

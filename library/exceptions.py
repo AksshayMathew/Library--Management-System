@@ -67,6 +67,10 @@ class DuplicateMemberError(LibraryError):
         super().__init__(f"A member with ID {member_id!r} already exists")
 
 
+class StorageError(LibraryError):
+    """Raised when the database cannot be opened or a write to it fails."""
+
+
 class LoanNotFoundError(LibraryError):
     """Raised when returning a book the member does not currently have on loan."""
 
