@@ -1,6 +1,7 @@
 # API examples (curl)
 
-Start the API first (it listens on `http://127.0.0.1:5000`):
+Start the API first. It prints "Welcome to HCLTech Library Management System", asks for your
+Employee ID (the rules for every request come from it), then listens on `http://127.0.0.1:5000`:
 
 ```bash
 python -m library.api

@@ -1,6 +1,6 @@
 ### Library Management System - example API requests
 ### Open in VS Code (REST Client extension) or JetBrains IDEs and click "Send Request".
-### Start the server first:  python -m library.api
+### Start the server first:  python -m library.api   (enter your Employee ID when asked)
 
 @baseUrl = http://127.0.0.1:5000
 

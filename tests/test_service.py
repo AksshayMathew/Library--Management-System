@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import random
 from collections.abc import Iterator
 from datetime import date
 
@@ -16,6 +17,7 @@ from library.exceptions import (
     BorrowLimitExceededError,
     DuplicateBookError,
     DuplicateMemberError,
+    LibraryError,
     LoanNotFoundError,
     MemberNotFoundError,
     ValidationError,
@@ -247,3 +249,44 @@ def test_borrow_and_return_are_logged(service: LibraryService, caplog: pytest.Lo
     messages = [r.getMessage() for r in caplog.records]
     assert any(m.startswith("borrow OK") for m in messages)
     assert any(m.startswith("return FAILED") for m in messages)
+
+
+# -- robustness ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize("seed", range(5))
+def test_random_operations_keep_the_data_consistent(
+    service: LibraryService, clock: FakeClock, settings: Settings, seed: int
+) -> None:
+    """Hundreds of random borrows, returns and date jumps (including the clock going
+    backwards, as with --today) must never break the library's rules."""
+    rng = random.Random(seed)
+    service.add_book(POETRY_ISBN, "Leaves of Grass", "Walt Whitman", "Poetry", copies=1)
+    service.add_book("0306406152", "Cosmos", "Carl Sagan", "Science", copies=2)
+    service.add_member("S2", "Meera", "meera@example.com", "student")
+    isbns = [CLEAN_CODE_ISBN, POETRY_ISBN, "9780306406157"]
+    limits = {"S1": settings.student_borrow_limit, "S2": settings.student_borrow_limit,
+              "T1": settings.staff_borrow_limit}
+    for _ in range(300):
+        member, isbn, action = rng.choice([*limits, "NOPE"]), rng.choice(isbns), rng.random()
+        try:
+            if action < 0.45:
+                service.borrow_book(member, isbn)
+            elif action < 0.85:
+                loan = service.return_book(member, isbn)
+                late_days = max(0, (loan.returned_on - loan.due_date).days)
+                assert loan.fine == round(late_days * settings.fine_per_day, 2)
+            else:
+                clock.advance(rng.choice([-3, 1, 5, 10, 20]))
+        except LibraryError:
+            pass  # rejected operations are expected; the invariants below must still hold
+
+        active = list(service.loans.iter_loans(active_only=True))
+        for book in service.books.iter_books():
+            on_loan = sum(1 for loan in active if loan.isbn == book.isbn)
+            assert 0 <= book.available_copies <= book.total_copies
+            assert book.total_copies - book.available_copies == on_loan
+        for member_id, limit in limits.items():
+            assert service.loans.count_active_loans(member_id) <= limit
+    for loan in service.loans.iter_loans():
+        assert loan.returned_on is None or loan.returned_on >= loan.borrowed_on
