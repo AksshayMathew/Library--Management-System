@@ -10,6 +10,7 @@ from library.exceptions import ValidationError
 from library.validators import (
     require_text,
     validate_email,
+    validate_employee_id,
     validate_isbn,
     validate_member_id,
     validate_positive_int,
@@ -100,6 +101,17 @@ def test_member_id_rules() -> None:
     assert validate_member_id(" S001 ") == "S001"
     with pytest.raises(ValidationError):
         validate_member_id("has space")
+
+
+@pytest.mark.parametrize("raw", ["56040183", " 56040183 ", "HCL123"])
+def test_valid_employee_ids(raw: str) -> None:
+    assert validate_employee_id(raw) == raw.strip()
+
+
+@pytest.mark.parametrize("raw", ["", "   ", "56 04", "56040183!", "1" * 21, None, 56040183])
+def test_invalid_employee_ids_raise(raw: object) -> None:
+    with pytest.raises(ValidationError, match="Employee ID"):
+        validate_employee_id(raw)
 
 
 def test_require_text_rejects_blank() -> None:

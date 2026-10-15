@@ -25,6 +25,7 @@ EMAIL_RE = re.compile(
 )
 EMAIL_MAX_LENGTH = 254
 MEMBER_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,20}$")
+EMPLOYEE_ID_RE = re.compile(r"^[A-Za-z0-9]{1,20}$")
 MAX_COUNT = 10_000  # sanity cap for counts such as copies (SQLite INTEGER is 64-bit)
 
 
@@ -85,6 +86,13 @@ def validate_member_id(raw: Any) -> str:
     """Member IDs are 1-20 letters, digits, underscores or hyphens (e.g. ``S001``)."""
     if not isinstance(raw, str) or not MEMBER_ID_RE.fullmatch(raw.strip()):
         raise ValidationError(f"Invalid member ID: {raw!r} (use 1-20 letters, digits, '_' or '-')")
+    return raw.strip()
+
+
+def validate_employee_id(raw: Any) -> str:
+    """Employee IDs are 1-20 letters or digits (e.g. ``56040183``), surrounding spaces ignored."""
+    if not isinstance(raw, str) or not EMPLOYEE_ID_RE.fullmatch(raw.strip()):
+        raise ValidationError(f"Invalid Employee ID: {raw!r} (use 1-20 letters or digits)")
     return raw.strip()
 
 
