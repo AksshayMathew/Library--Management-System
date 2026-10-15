@@ -14,9 +14,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from library.config import DB_PATH_ENV_VAR, DEFAULT_DB_PATH, load_settings  # noqa: E402
-from library.exceptions import DuplicateBookError, DuplicateMemberError  # noqa: E402
+from library.exceptions import (  # noqa: E402
+    DuplicateBookError,
+    DuplicateMemberError,
+    LibraryError,
+    ValidationError,
+)
 from library.logging_config import configure_logging  # noqa: E402
 from library.services.library_service import LibraryService  # noqa: E402
+from library.startup import WELCOME_MESSAGE, ask_employee_id  # noqa: E402
 from library.storage.sqlite_storage import SQLiteStorage  # noqa: E402
 
 BOOKS = [
@@ -44,6 +50,8 @@ def seed(service: LibraryService) -> None:
             print(f"Added book:   {title}")
         except DuplicateBookError:
             print(f"Skipped book: {title} (already exists)")
+        except ValidationError:  # the service rejects genres not assigned to this Employee ID
+            print(f"Skipped book: {title} ({genre} is not one of your assigned genres)")
     for member_id, name, email, member_type in MEMBERS:
         try:
             service.add_member(member_id, name, email, member_type)
@@ -52,14 +60,23 @@ def seed(service: LibraryService) -> None:
             print(f"Skipped member: {member_id} (already exists)")
 
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser(description="Seed the library database with sample data")
     parser.add_argument("--db", default=os.environ.get(DB_PATH_ENV_VAR, DEFAULT_DB_PATH))
+    parser.add_argument("--employee-id", help="your Employee ID (asked for if omitted)")
     args = parser.parse_args()
     configure_logging()
-    with SQLiteStorage(args.db) as storage:
-        seed(LibraryService.from_storage(storage, load_settings()))
+    try:
+        if args.employee_id is None:
+            print(WELCOME_MESSAGE)
+        settings = load_settings(args.employee_id if args.employee_id is not None else ask_employee_id())
+        with SQLiteStorage(args.db) as storage:
+            seed(LibraryService.from_storage(storage, settings))
+    except LibraryError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

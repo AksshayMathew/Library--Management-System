@@ -36,6 +36,7 @@ an **`argparse` CLI** and a **Flask REST API**, and data is stored in **SQLite**
 ```
 library/
   config.py            personalisation script + frozen Settings
+  startup.py           welcome message + Employee ID prompt (CLI, API, seed script)
   exceptions.py        LibraryError hierarchy
   validators.py        regex validation (ISBN-10/13 + checksum, email, IDs)
   decorators.py        @log_action, @require_member, @register_member_type
@@ -71,11 +72,24 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+## Starting the program
+
+Every entry point (the CLI, the API server and the seed script) starts the same way: it prints
+**"Welcome to HCLTech Library Management System"**, asks for your Employee ID and personalises the
+rules from it. There is no built-in default ID.
+
+```
+Welcome to HCLTech Library Management System
+Please enter your Employee ID: 56040183
+```
+
 Optionally load sample data (one book per genre, two students, one staff member):
 
 ```bash
 python scripts/seed_data.py
 ```
+
+Books whose genre is not one of your assigned genres are skipped.
 
 ## Running the tests
 
@@ -84,6 +98,22 @@ python -m pytest -v
 ```
 
 ## Using the CLI
+
+**Interactive session (recommended).** Run it with no command, enter your Employee ID once, then type
+commands without the `python -m library` prefix. Type `help` for the list and `exit` to quit.
+
+```
+python -m library
+Welcome to HCLTech Library Management System
+Please enter your Employee ID: 56040183
+Library rules for Employee ID 56040183: ...
+library> list-books --genre Poetry
+library> borrow --member-id S001 --isbn 9780132350884
+library> exit
+Goodbye!
+```
+
+**One command at a time.** Each command asks for your Employee ID, unless you pass `--employee-id`:
 
 ```bash
 python -m library --help
@@ -103,7 +133,7 @@ Global options (placed **before** the command):
 | Option | Purpose |
 |---|---|
 | `--db PATH` | database file (default `library.db`, or `$LIBRARY_DB_PATH`) |
-| `--employee-id ID` | personalise rules for another ID (default `$LIBRARY_EMPLOYEE_ID` or `56040183`) |
+| `--employee-id ID` | your Employee ID, so the command doesn't ask for it (useful in scripts) |
 | `--today YYYY-MM-DD` | pretend it is another day, which is handy for showing overdue fines |
 
 Demonstrating a fine (uses member `S001` from the seed data):
@@ -126,7 +156,7 @@ Input rules worth knowing:
 ## Using the REST API
 
 ```bash
-python -m library.api          # serves http://127.0.0.1:5000
+python -m library.api          # asks for your Employee ID, then serves http://127.0.0.1:5000
 ```
 
 | Method | Endpoint | Success | Errors |

@@ -20,9 +20,9 @@
 The system has four layers, and each one only talks to the layer below it.
 The **delivery layer** has two front-ends: an `argparse` CLI (`library/cli.py`) and a Flask API
 (`library/api/app.py`). Both parse their input, call the service, and format the result as text or JSON.
-They contain no library rules. For example, borrowing from the terminal (`cli.py:52`) and borrowing over HTTP
+They contain no library rules. For example, borrowing from the terminal (`cli.py:60`) and borrowing over HTTP
 (`api/app.py:74`) both call the same `LibraryService.borrow_book` (`library/services/library_service.py:170`).
-Returning works the same way (`cli.py:57`, `app.py:81` → `library_service.py:196`). As a result, the CLI and
+Returning works the same way (`cli.py:65`, `app.py:81` → `library_service.py:196`). As a result, the CLI and
 the API cannot disagree about a borrow limit or a fine.
 
 The **service layer** (`library/services/`) is where all the rules live: borrow limits, availability, genres,
@@ -31,7 +31,7 @@ The **storage layer** (`library/storage/`) defines abstract repositories and imp
 
 Errors flow upward as custom exceptions that all derive from `LibraryError` (`library/exceptions.py:13`).
 They describe *what* went wrong, never how to show it. Each delivery layer decides how to present them.
-The CLI prints `Error: ...` and exits with code 1 (`cli.py:187`). The API maps each exception class to an
+The CLI prints `Error: ...` and exits with code 1 (`cli.py:251`). The API maps each exception class to an
 HTTP status in a single table (`app.py:98`): 400 for validation, 404 for not found, 409 for rule violations
 and 500 for database failures. Even a raw `sqlite3` error never escapes: storage re-raises it as
 `StorageError`.
@@ -77,14 +77,14 @@ implement `checkout`. Storage is split the same way into `BookRepository`, `Memb
 
 **Dependency Inversion.** `LibraryService.__init__` (`library_service.py:88`) is typed against those
 abstractions plus a `FinePolicy` and a `today()` clock. It never imports `sqlite3`. The concrete
-`SQLiteStorage` is chosen only at the outer edges: `cli.py:187` and `library/api/__main__.py`. This is what
+`SQLiteStorage` is chosen only at the outer edges: `cli.py:251` and `library/api/__main__.py`. This is what
 makes the code testable. The tests inject an in-memory database and a `FakeClock` (`tests/conftest.py`)
 to check fines on exact dates, and a JSON back-end could replace SQLite without changing the service.
 
 ## 3. Personalised parameters
 
-`get_my_library_parameters("56040183")` (`library/config.py:22`) produces our rules. We wrap them in a frozen
-`Settings` dataclass (`config.py:37`) so no layer can change a limit at runtime.
+`get_my_library_parameters("56040183")` (`library/config.py:21`) produces our rules. We wrap them in a frozen
+`Settings` dataclass (`config.py:36`) so no layer can change a limit at runtime.
 
 | Parameter | Value | Where it is enforced |
 |---|---|---|
@@ -94,7 +94,11 @@ to check fines on exact dates, and a JSON back-end could replace SQLite without 
 | fine_per_day | 1.73 | `FinePolicy.calculate` (`fine_policy.py:36`): days late × 1.73, rounded to 2 dp |
 | loan period (our choice) | 14 days | `Settings.loan_period_days` |
 
-The ID can be overridden with `--employee-id` or the `LIBRARY_EMPLOYEE_ID` variable (`config.py:64`).
+The Employee ID is not hard-coded. Every entry point (CLI, API server, seed script) prints
+"Welcome to HCLTech Library Management System" and asks for it (`ask_employee_id`, `library/startup.py:33`),
+re-asking up to three times for an invalid ID. `load_settings` (`config.py:63`) then validates it and builds
+the `Settings`. 56040183 is the ID we use for the demo and the tests; any other ID gets its own rules.
+For scripted runs, the CLI and seed script also accept `--employee-id`.
 
 ## 4. Trade-offs we made consciously
 
@@ -115,7 +119,7 @@ The ID can be overridden with `--employee-id` or the `LIBRARY_EMPLOYEE_ID` varia
   loaded `Member` (`decorators.py:52`). This avoids looking the member up twice, at the cost of a less
   obvious signature, so we documented it in the docstrings.
 - **Single-threaded API.** One SQLite connection is shared, so the development server runs with
-  `threaded=False` (`library/api/__main__.py:19`). A production version would open a connection per
+  `threaded=False` (`library/api/__main__.py:33`). A production version would open a connection per
   request.
 - **Fines are calculated, not paid.** `total_fines` adds up the fines recorded at return plus the fines still
   accruing on overdue books. A payments feature was out of scope (KISS).

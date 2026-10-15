@@ -4,7 +4,10 @@ This module only parses arguments, calls ``LibraryService`` and formats the
 result for a terminal. It contains no business rules: every check (limits,
 availability, validation) happens in the service, exactly as for the API.
 
-Usage: ``python -m library <command> [options]`` - run with ``--help`` for details.
+Usage:
+  ``python -m library``                     interactive session: welcome, Employee ID, then commands
+  ``python -m library <command> [options]`` one command (asks for the Employee ID unless
+                                            ``--employee-id`` is given) - run ``--help`` for details.
 """
 
 from __future__ import annotations
@@ -12,16 +15,21 @@ from __future__ import annotations
 import argparse
 import io
 import os
+import shlex
 import sys
 from collections.abc import Callable, Sequence
 from datetime import date
 
-from library.config import DB_PATH_ENV_VAR, DEFAULT_DB_PATH, load_settings
+from library.config import DB_PATH_ENV_VAR, DEFAULT_DB_PATH, Settings, load_settings
 from library.exceptions import LibraryError
 from library.logging_config import configure_logging
 from library.models.book import Book
 from library.services.library_service import LibraryService
+from library.startup import WELCOME_MESSAGE, Reader, ask_employee_id, clean_input, describe_rules
 from library.storage.sqlite_storage import SQLiteStorage
+
+EXIT_WORDS = {"exit", "quit"}
+HELP_WORDS = {"help", "?"}
 
 Handler = Callable[[LibraryService, argparse.Namespace], None]
 
@@ -111,13 +119,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=os.environ.get(DB_PATH_ENV_VAR, DEFAULT_DB_PATH),
         help=f"SQLite database file (default: ${DB_PATH_ENV_VAR} or {DEFAULT_DB_PATH})",
     )
-    parser.add_argument("--employee-id", help="employee ID used to personalise the library rules")
+    parser.add_argument(
+        "--employee-id",
+        help="your Employee ID (if omitted, you are asked for it when the program starts)",
+    )
     parser.add_argument(
         "--today",
         type=parse_date,
         help="pretend today is YYYY-MM-DD (useful to demonstrate overdue fines)",
     )
-    commands = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
+    commands = parser.add_subparsers(dest="command", metavar="COMMAND")
 
     add_book = commands.add_parser("add-book", help="add a book to the catalogue")
     add_book.add_argument("--isbn", required=True, help="ISBN-10 or ISBN-13, hyphens allowed (stored as ISBN-13)")
@@ -184,17 +195,79 @@ def use_safe_console_output() -> None:
             stream.reconfigure(errors="replace")
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    """Entry point. Returns the process exit code (0 = success, 1 = library error)."""
-    use_safe_console_output()
-    args = build_parser().parse_args(argv)
-    configure_logging()
-    settings = load_settings(args.employee_id)
+def run_command(storage: SQLiteStorage, settings: Settings, args: argparse.Namespace) -> None:
+    """Run one parsed command against the open database."""
     today: Callable[[], date] = (lambda: args.today) if args.today else date.today
     handler: Handler = args.handler
+    handler(LibraryService.from_storage(storage, settings, today=today), args)
+
+
+def run_interactive(
+    parser: argparse.ArgumentParser, storage: SQLiteStorage, settings: Settings, read: Reader
+) -> int:
+    """Read commands one line at a time until the user types ``exit``.
+
+    Each line uses the same syntax as a one-off command, without ``python -m library``
+    in front, e.g. ``borrow --member-id S001 --isbn 9780132350884``. The Employee ID
+    entered at start-up applies to the whole session.
+    """
+    print(describe_rules(settings))
+    print("Type a command, e.g. 'list-books' or 'borrow --member-id S001 --isbn 9780132350884'.")
+    print("Type 'help' to see every command, or 'exit' to quit.")
+    while True:
+        try:
+            line = clean_input(read("library> "))
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+        if not line:
+            continue
+        if line.lower() in EXIT_WORDS:
+            break
+        if line.lower() in HELP_WORDS:
+            parser.print_help()
+            continue
+        try:
+            line_args = parser.parse_args(shlex.split(line))
+        except ValueError as exc:  # e.g. an unclosed quote
+            print(f"Error: {exc}", file=sys.stderr)
+            continue
+        except SystemExit:  # argparse already printed the usage error (or --help)
+            continue
+        if line_args.command is None:
+            print("Please type a command, e.g. 'list-books'. Type 'help' to see them all.")
+            continue
+        if line_args.employee_id not in (None, settings.employee_id):
+            print(f"Note: this session uses Employee ID {settings.employee_id}. "
+                  "Exit and start again to use a different one.")
+        try:
+            run_command(storage, settings, line_args)
+        except LibraryError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+    print("Goodbye!")
+    return 0
+
+
+def main(argv: Sequence[str] | None = None, read: Reader = input) -> int:
+    """Entry point. Returns the process exit code (0 = success, 1 = library error).
+
+    Without ``--employee-id`` the user is welcomed and asked for their Employee ID.
+    Without a command, an interactive session starts.
+    """
+    use_safe_console_output()
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    configure_logging()
+    interactive = args.command is None
     try:
+        if interactive or args.employee_id is None:
+            print(WELCOME_MESSAGE)
+        employee_id = args.employee_id if args.employee_id is not None else ask_employee_id(read)
+        settings = load_settings(employee_id)
         with SQLiteStorage(args.db) as storage:
-            handler(LibraryService.from_storage(storage, settings, today=today), args)
+            if interactive:
+                return run_interactive(parser, storage, settings, read)
+            run_command(storage, settings, args)
     except LibraryError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1

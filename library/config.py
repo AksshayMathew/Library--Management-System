@@ -8,12 +8,11 @@ an immutable, typed object that the rest of the application depends on.
 from __future__ import annotations
 
 import hashlib
-import os
 import random
 from dataclasses import dataclass
 
-DEFAULT_EMPLOYEE_ID = "56040183"
-EMPLOYEE_ID_ENV_VAR = "LIBRARY_EMPLOYEE_ID"
+from library.validators import validate_employee_id
+
 DEFAULT_DB_PATH = "library.db"
 DB_PATH_ENV_VAR = "LIBRARY_DB_PATH"
 LOAN_PERIOD_DAYS = 14
@@ -61,7 +60,10 @@ class Settings:
         )
 
 
-def load_settings(employee_id: str | None = None) -> Settings:
-    """Resolve the employee ID (argument > environment variable > default) and load settings."""
-    resolved = employee_id or os.environ.get(EMPLOYEE_ID_ENV_VAR) or DEFAULT_EMPLOYEE_ID
-    return Settings.from_employee_id(resolved)
+def load_settings(employee_id: str) -> Settings:
+    """Validate the employee ID entered by the user and load their personalised settings.
+
+    There is deliberately no default ID: every joiner's rules come from the ID
+    they type in (see ``library.startup.ask_employee_id``).
+    """
+    return Settings.from_employee_id(validate_employee_id(employee_id))
