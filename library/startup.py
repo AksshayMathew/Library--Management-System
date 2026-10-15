@@ -34,12 +34,15 @@ def ask_employee_id(read: Reader = input, write: Writer = print, attempts: int =
     """Ask for the Employee ID until a valid one is entered (at most ``attempts`` times).
 
     Raises ``ValidationError`` if no valid ID is given, including when the
-    input ends (Ctrl+Z / Ctrl+D or an empty pipe) before an ID is typed.
+    input ends (Ctrl+Z / Ctrl+D or an empty pipe) or the user presses Ctrl+C
+    at the prompt, so every entry point exits with a clear message instead
+    of a traceback.
     """
     for attempt in range(1, attempts + 1):
         try:
             raw = read(EMPLOYEE_ID_PROMPT)
-        except EOFError:
+        except (EOFError, KeyboardInterrupt):
+            write("")  # finish the prompt line so the error starts on its own line
             raise ValidationError("No Employee ID was entered") from None
         try:
             return validate_employee_id(clean_input(raw))
